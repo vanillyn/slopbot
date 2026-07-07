@@ -20,3 +20,7 @@ class BotConfig:
     twitch_webhook_enabled: bool = _bool("TWITCH_WEBHOOK_ENABLED", True)
     webhook_host: str = os.getenv("WEBHOOK_HOST", "0.0.0.0")
     webhook_port: int = int(os.getenv("WEBHOOK_PORT", "8080"))
+
+    dashboard_enabled: bool = _bool("DASHBOARD_ENABLED", True)
+    dashboard_host: str = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+    dashboard_port: int = int(os.getenv("DASHBOARD_PORT", "8081"))

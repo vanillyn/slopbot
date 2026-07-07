@@ -72,13 +72,41 @@ async def get_ticket_by_channel(db: Database, channel_id: int) -> dict[str, obje
     return dict(zip(keys, row))
 
 
+async def get_ticket_panels(db: Database, guild_id: int) -> list[dict[str, object]]:
+    rows = await db.fetchall(
+        "select id, guild_id, channel_id, message_id, category_id, staff_role_id, title, description"
+        " from ticket_panels where guild_id = ? order by id",
+        (guild_id,),
+    )
+    panels: list[dict[str, object]] = []
+    for row in rows:
+        panels.append(
+            {
+                "id": int(row[0]),
+                "guild_id": int(row[1]),
+                "channel_id": int(row[2]),
+                "message_id": int(row[3]) if row[3] is not None else 0,
+                "category_id": int(row[4]) if row[4] is not None else 0,
+                "staff_role_id": int(row[5]) if row[5] is not None else 0,
+                "title": str(row[6]),
+                "description": str(row[7]),
+            }
+        )
+    return panels
+
+
 async def create_ticket(
-    db: Database, guild_id: int, channel_id: int, opener_id: int, panel_id: int
+    db: Database,
+    guild_id: int,
+    channel_id: int,
+    opener_id: int,
+    panel_id: int,
+    reason: str = "",
 ) -> int:
     await db.execute(
-        "insert into tickets (guild_id, channel_id, opener_id, panel_id, created_at)"
-        " values (?, ?, ?, ?, ?)",
-        (guild_id, channel_id, opener_id, panel_id, int(time.time())),
+        "insert into tickets (guild_id, channel_id, opener_id, panel_id, reason, created_at)"
+        " values (?, ?, ?, ?, ?, ?)",
+        (guild_id, channel_id, opener_id, panel_id, reason, int(time.time())),
     )
     row = await db.fetchone(
         "select id from tickets where channel_id = ?", (channel_id,)

@@ -17,6 +17,7 @@ INITIAL_EXTENSIONS = (
     "src.cogs.twitch.cog",
     "src.cogs.music.queue",
     "src.cogs.music.cog",
+    "src.cogs.dashboard.cog",
 )
 
 

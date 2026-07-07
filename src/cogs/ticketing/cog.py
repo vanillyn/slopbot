@@ -16,7 +16,7 @@ from src.cogs.ticketing.db import (
     get_ticket_by_channel,
     set_panel_message,
 )
-from src.utils.ui import BaseLayout
+from src.utils.ui import BaseLayout, BaseModal
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -32,26 +32,23 @@ def _panel_layout(title: str, description: str, panel_id: int) -> BaseLayout:
     return layout
 
 
-class OpenTicketButton(ui.DynamicItem[ui.Button[ui.View]], template=r"ticket:open:(\d+)"):
-    def __init__(self, panel_id: int) -> None:
-        item: ui.Button[ui.View] = ui.Button(
-            label="open ticket",
-            style=discord.ButtonStyle.primary,
-            custom_id=f"ticket:open:{panel_id}",
-        )
-        super().__init__(item)
+class TicketReasonModal(BaseModal):
+    reason = ui.TextInput(
+        label="Reason for support",
+        placeholder="Describe your issue or question",
+        required=False,
+        style=discord.TextStyle.paragraph,
+        max_length=512,
+    )
+
+    def __init__(self, panel_id: int, user: discord.User) -> None:
+        super().__init__(title="Ticket reason", custom_id=f"ticket_reason_modal:{panel_id}:{user.id}")
         self.panel_id = panel_id
 
-    @classmethod
-    async def from_custom_id(
-        cls, interaction: discord.Interaction, item: ui.Button[ui.View], match: re.Match[str]
-    ) -> "OpenTicketButton":
-        return cls(int(match.group(1)))
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        bot = interaction.client
-        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
             return
+        bot = interaction.client
         panel = await get_panel(bot.db, self.panel_id)  # type: ignore[attr-defined]
         if panel is None:
             await interaction.response.send_message("this panel no longer exists", ephemeral=True)
@@ -78,9 +75,14 @@ class OpenTicketButton(ui.DynamicItem[ui.Button[ui.View]], template=r"ticket:ope
             if role is not None:
                 overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
+        display_name = interaction.user.name or str(interaction.user.id)
+        channel_name = f"ticket-{display_name}".lower()
+        if len(channel_name) > 90:
+            channel_name = channel_name[:90]
+
         try:
             channel = await guild.create_text_channel(
-                name=f"ticket-{interaction.user.name}"[:90],
+                name=channel_name,
                 category=category if isinstance(category, discord.CategoryChannel) else None,
                 overwrites=overwrites,
                 reason=f"ticket opened by {interaction.user}",
@@ -89,12 +91,19 @@ class OpenTicketButton(ui.DynamicItem[ui.Button[ui.View]], template=r"ticket:ope
             await interaction.followup.send(f"couldn't create the ticket channel: {e}", ephemeral=True)
             return
 
-        await create_ticket(bot.db, guild.id, channel.id, interaction.user.id, self.panel_id)  # type: ignore[attr-defined]
+        await create_ticket(
+            bot.db,
+            guild.id,
+            channel.id,
+            interaction.user.id,
+            self.panel_id,
+            self.reason.value.strip(),
+        )  # type: ignore[attr-defined]
 
         layout = BaseLayout()
         layout.add_container(
             ui.TextDisplay(
-                f"# ticket opened\n{interaction.user.mention} — a member of staff will be with you shortly."
+                f"# ticket opened\n{interaction.user.mention} — a member of staff will be with you shortly.\n\n**Reason:** {self.reason.value.strip() or 'no reason provided'}"
             ),
             accent_color=0x57F287,
         )
@@ -102,6 +111,29 @@ class OpenTicketButton(ui.DynamicItem[ui.Button[ui.View]], template=r"ticket:ope
         await channel.send(view=layout)
         await interaction.followup.send(f"ticket created: {channel.mention}", ephemeral=True)
         log.info("ticket opened by %s in %s", interaction.user.id, channel.id)
+
+
+class OpenTicketButton(ui.DynamicItem[ui.Button[ui.View]], template=r"ticket:open:(\d+)"):
+    def __init__(self, panel_id: int) -> None:
+        item: ui.Button[ui.View] = ui.Button(
+            label="open ticket",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"ticket:open:{panel_id}",
+        )
+        super().__init__(item)
+        self.panel_id = panel_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: ui.Button[ui.View], match: re.Match[str]
+    ) -> "OpenTicketButton":
+        return cls(int(match.group(1)))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            return
+        modal = TicketReasonModal(self.panel_id, interaction.user)
+        await interaction.response.send_modal(modal)
 
 
 class CloseTicketButton(ui.DynamicItem[ui.Button[ui.View]], template=r"ticket:close"):

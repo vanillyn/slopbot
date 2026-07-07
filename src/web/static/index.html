@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>coco</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero-panel hero-landing">
+        <div class="hero-copy">
+          <p class="eyebrow">coco</p>
+          <h1>discord moderation, tickets, and tools</h1>
+          <p>connect your server with a clean web dashboard for ticket panels, role config, and bot actions.</p>
+          <button id="login-button" class="button button-primary">connect Discord</button>
+        </div>
+      </header>
+
+      <section class="panel" id="dashboard-root" hidden>
+        <div class="panel-title-row">
+          <div>
+            <p class="eyebrow">server selector</p>
+            <h2 id="guild-name">choose a server</h2>
+          </div>
+          <button id="logout-button" class="button button-secondary">sign out</button>
+        </div>
+        <div class="grid-list" id="guild-list"></div>
+      </section>
+
+      <section class="panel" id="config-panel" hidden>
+        <div class="panel-title-row">
+          <div>
+            <p class="eyebrow">config</p>
+            <h2 id="selected-guild-title">server settings</h2>
+          </div>
+          <button id="back-button" class="button button-secondary">back</button>
+        </div>
+        <div class="config-grid">
+          <div class="field-group">
+            <label>moderator role</label>
+            <select id="moderator-role"></select>
+          </div>
+          <div class="field-group">
+            <label>admin role</label>
+            <select id="admin-role"></select>
+          </div>
+          <div class="field-group">
+            <label>member role</label>
+            <select id="member-role"></select>
+          </div>
+          <div class="field-group">
+            <label>image perms role</label>
+            <select id="image-role"></select>
+          </div>
+          <div class="field-group">
+            <label>music role</label>
+            <select id="music-role"></select>
+          </div>
+          <div class="field-group wide">
+            <label>ticket panel channel</label>
+            <select id="ticket-channel"></select>
+          </div>
+          <div class="field-group wide">
+            <label>ticket reason message</label>
+            <input id="ticket-message" type="text" placeholder="ticket reason template" />
+          </div>
+          <div class="field-group wide">
+            <label>dashboard help</label>
+            <textarea id="help-text" rows="4" readonly>Use the server list to select the guild you manage. The buttons below let you configure roles, ticket channels, and music controls. The actions panel also supports ticket creation, closing, and music playback.</textarea>
+          </div>
+        </div>
+        <div class="button-row">
+          <button id="save-config" class="button button-primary">save settings</button>
+          <button id="ticket-panels-button" class="button button-secondary">ticket panels</button>
+          <button id="containers-button" class="button button-secondary">button containers</button>
+          <button id="action-panel" class="button button-secondary">open action panel</button>
+        </div>
+      </section>
+
+      <section class="panel" id="ticket-panel" hidden>
+        <div class="panel-title-row">
+          <div>
+            <p class="eyebrow">ticket panels</p>
+            <h2>manage ticket panel</h2>
+          </div>
+          <button id="ticket-panel-back" class="button button-secondary">back</button>
+        </div>
+        <div class="config-grid">
+          <div class="field-group wide">
+            <label>panel channel</label>
+            <select id="ticket-panel-channel"></select>
+          </div>
+          <div class="field-group wide">
+            <label>panel category</label>
+            <select id="ticket-panel-category"></select>
+          </div>
+          <div class="field-group wide">
+            <label>staff role</label>
+            <select id="ticket-panel-staff-role"></select>
+          </div>
+          <div class="field-group wide">
+            <label>panel title</label>
+            <input id="ticket-panel-title" type="text" placeholder="support" />
+          </div>
+          <div class="field-group wide">
+            <label>panel description</label>
+            <input id="ticket-panel-description" type="text" placeholder="click below to open a ticket" />
+          </div>
+          <div class="field-group wide">
+            <label>existing panels</label>
+            <div id="ticket-panels-list" class="list-box"></div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button id="create-ticket-panel" class="button button-primary">create ticket panel</button>
+        </div>
+      </section>
+
+      <section class="panel" id="containers-panel" hidden>
+        <div class="panel-title-row">
+          <div>
+            <p class="eyebrow">button containers</p>
+            <h2>manage containers</h2>
+          </div>
+          <button id="containers-back" class="button button-secondary">back</button>
+        </div>
+        <div class="config-grid">
+          <div class="field-group wide">
+            <label>container name</label>
+            <input id="container-name" type="text" placeholder="help buttons" />
+          </div>
+          <div class="field-group wide">
+            <label>accent color</label>
+            <input id="container-accent" type="text" placeholder="16777215 or 0xFFAABB" />
+          </div>
+          <div class="field-group wide">
+            <label>container items (JSON array)</label>
+            <textarea id="container-items" rows="6" placeholder='[{"label":"open","action":"open_ticket"}]'></textarea>
+          </div>
+          <div class="field-group wide">
+            <label>saved containers</label>
+            <div id="container-list" class="list-box"></div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button id="save-container" class="button button-primary">save container</button>
+        </div>
+      </section>
+
+      <section class="panel" id="actions-panel" hidden>
+        <div class="panel-title-row">
+          <div>
+            <p class="eyebrow">actions</p>
+            <h2>button actions</h2>
+          </div>
+          <button id="actions-back" class="button button-secondary">back</button>
+        </div>
+        <div class="grid-list">
+          <button class="tile-action button button-tertiary" data-action="play">play a song</button>
+          <button class="tile-action button button-tertiary" data-action="pause">pause song</button>
+          <button class="tile-action button button-tertiary" data-action="resume">resume song</button>
+          <button class="tile-action button button-tertiary" data-action="skip">skip track</button>
+          <button class="tile-action button button-tertiary" data-action="stop">stop music</button>
+          <button class="tile-action button button-tertiary" data-action="open_twitch">open twitch url</button>
+        </div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

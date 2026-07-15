@@ -34,6 +34,14 @@ const elements = {
   musicRole: document.getElementById("music-role"),
   ticketChannel: document.getElementById("ticket-channel"),
   ticketMessage: document.getElementById("ticket-message"),
+  announcementChannel: document.getElementById("announcement-channel"),
+  announcementRole: document.getElementById("announcement-role"),
+  joinChannel: document.getElementById("join-channel"),
+  joinMessages: document.getElementById("join-messages"),
+  leaveChannel: document.getElementById("leave-channel"),
+  leaveMessages: document.getElementById("leave-messages"),
+  widgetEnabled: document.getElementById("widget-enabled"),
+  widgetPreview: document.getElementById("widget-preview"),
   ticketPanelsButton: document.getElementById("ticket-panels-button"),
   containersButton: document.getElementById("containers-button"),
   ticketPanelBack: document.getElementById("ticket-panel-back"),
@@ -53,8 +61,8 @@ const elements = {
   moderationButton: document.getElementById("moderation-button"),
   moderationPanel: document.getElementById("moderation-panel"),
   moderationBack: document.getElementById("moderation-back"),
-  muteRole: document.getElementById("mute-role"),
   muteChannel: document.getElementById("mute-channel"),
+  lockdownIncludeMemberRole: document.getElementById("lockdown-include-member-role"),
   requireConfirm: document.getElementById("require-confirm"),
   warnDm: document.getElementById("warn-dm"),
   warnChannel: document.getElementById("warn-channel"),
@@ -171,6 +179,29 @@ async function loadRolesAndChannels(guildId) {
   fillSelect(elements.ticketPanelCategory, categoryOptions, "");
   fillSelect(elements.ticketPanelStaffRole, roles, "");
   elements.ticketMessage.value = config.ticket_message || "create a ticket for help";
+
+  const textChannels = channels.filter((channel) => channel.type === "text");
+  fillSelect(elements.announcementChannel, textChannels, config.announcement_channel || "");
+  fillSelect(elements.announcementRole, roles, config.announcement_role || "");
+  fillSelect(elements.joinChannel, textChannels, config.join_channel || "");
+  fillSelect(elements.leaveChannel, textChannels, config.leave_channel || "");
+  elements.joinMessages.value = listToLines(config.join_messages);
+  elements.leaveMessages.value = listToLines(config.leave_messages);
+  elements.widgetEnabled.checked = Boolean(config.widget_enabled);
+  renderWidgetPreview(guildId, config.widget_enabled);
+}
+
+function renderWidgetPreview(guildId, enabled) {
+  elements.widgetPreview.innerHTML = "";
+  if (!enabled) return;
+  const iframe = document.createElement("iframe");
+  iframe.src = `https://discord.com/widget?id=${guildId}&theme=dark`;
+  iframe.width = "350";
+  iframe.height = "500";
+  iframe.allowTransparency = "true";
+  iframe.frameBorder = "0";
+  iframe.sandbox = "allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts";
+  elements.widgetPreview.appendChild(iframe);
 }
 
 async function saveConfig() {
@@ -183,6 +214,13 @@ async function saveConfig() {
     music_role: elements.musicRole.value || null,
     ticket_channel: elements.ticketChannel.value || null,
     ticket_message: elements.ticketMessage.value || null,
+    announcement_channel: elements.announcementChannel.value || null,
+    announcement_role: elements.announcementRole.value || null,
+    join_channel: elements.joinChannel.value || null,
+    join_messages: linesToList(elements.joinMessages.value),
+    leave_channel: elements.leaveChannel.value || null,
+    leave_messages: linesToList(elements.leaveMessages.value),
+    widget_enabled: elements.widgetEnabled.checked,
   };
   const result = await fetchJson(`/api/guild/${state.selectedGuild.id}/config`, {
     method: "POST",
@@ -191,6 +229,7 @@ async function saveConfig() {
   });
   if (result.ok) {
     alert("settings saved");
+    renderWidgetPreview(state.selectedGuild.id, elements.widgetEnabled.checked);
   } else {
     alert(result.error || "failed to save settings");
   }
@@ -219,9 +258,9 @@ async function loadModeration() {
     alert(mod.error);
     return;
   }
-  fillSelect(elements.muteRole, roles, mod.mute_role || "");
   fillSelect(elements.muteChannel, channels.filter((c) => c.type === "text"), mod.mute_channel || "");
   elements.requireConfirm.checked = Boolean(mod.require_confirm);
+  elements.lockdownIncludeMemberRole.checked = Boolean(mod.lockdown_include_member_role);
   elements.warnDm.value = listToLines(mod.warn_dm);
   elements.warnChannel.value = listToLines(mod.warn_channel);
   elements.kickDm.value = listToLines(mod.kick_dm);
@@ -235,9 +274,9 @@ async function loadModeration() {
 async function saveModeration() {
   if (!state.selectedGuild) return;
   const payload = {
-    mute_role: elements.muteRole.value || null,
     mute_channel: elements.muteChannel.value || null,
     require_confirm: elements.requireConfirm.checked,
+    lockdown_include_member_role: elements.lockdownIncludeMemberRole.checked,
     warn_dm: linesToList(elements.warnDm.value),
     warn_channel: linesToList(elements.warnChannel.value),
     kick_dm: linesToList(elements.kickDm.value),

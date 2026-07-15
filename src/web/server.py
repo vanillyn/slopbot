@@ -220,7 +220,7 @@ class DashboardServer:
             if value is None or value == "":
                 await delete_config(self.bot.db, guild_id, key)
             else:
-                await set_config(self.bot.db, guild_id, key, str(value))
+                await set_config(self.bot.db, guild_id, key, value)
         return web.json_response({"ok": True})
 
     async def _handle_get_moderation(self, request: web.Request) -> web.Response:

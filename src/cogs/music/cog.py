@@ -22,6 +22,8 @@ CACHE_DIR = "data/youtube_cache"
 
 
 class MusicCog(commands.Cog, name="music"):
+    music = app_commands.Group(name="music", description="music playback")
+
     def __init__(self, bot: "Bot") -> None:
         self.bot = bot
         os.makedirs(CACHE_DIR, exist_ok=True)
@@ -119,7 +121,7 @@ class MusicCog(commands.Cog, name="music"):
             return True, f"added to queue: {metadata['title']}"
         return False, "not connected properly"
 
-    @app_commands.command(name="play", description="play audio from a youtube url")
+    @music.command(name="play", description="play audio from a youtube url")
     @app_commands.describe(url="youtube video url")
     async def play(self, interaction: discord.Interaction, url: str) -> None:
         await interaction.response.defer()
@@ -139,7 +141,7 @@ class MusicCog(commands.Cog, name="music"):
         else:
             await interaction.followup.send(message)
 
-    @app_commands.command(name="skip", description="skip the current track")
+    @music.command(name="skip", description="skip the current track")
     async def skip(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None or interaction.guild.voice_client is None:
             await interaction.response.send_message("not playing anything", ephemeral=True)
@@ -151,7 +153,7 @@ class MusicCog(commands.Cog, name="music"):
         else:
             await interaction.response.send_message("nothing to skip", ephemeral=True)
 
-    @app_commands.command(name="np", description="show the current track")
+    @music.command(name="np", description="show the current track")
     async def now_playing(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
             await interaction.response.send_message("only works in servers", ephemeral=True)
@@ -170,7 +172,7 @@ class MusicCog(commands.Cog, name="music"):
         uploader = metadata.get("uploader", "unknown")
         await interaction.response.send_message(f"now playing: {title} — {uploader}")
 
-    @app_commands.command(name="queue", description="show the current music queue")
+    @music.command(name="queue", description="show the current music queue")
     async def queue_list(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
             await interaction.response.send_message("only works in servers", ephemeral=True)
@@ -198,7 +200,7 @@ class MusicCog(commands.Cog, name="music"):
             lines.append("queue is empty")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-    @app_commands.command(name="stop", description="stop playback, clear the queue, and disconnect")
+    @music.command(name="stop", description="stop playback, clear the queue, and disconnect")
     async def stop(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
             return

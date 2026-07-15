@@ -12,6 +12,8 @@ from discord.ext import commands
 
 from src.utils.ui import BaseLayout
 from src.utils.logger import get_logger
+from src.data.config import GuildConfig
+from src.cogs.moderation.lockdown import lock_channels, unlock_channels
 
 if TYPE_CHECKING:
     from src.bot import Bot
@@ -98,36 +100,37 @@ class AntiRaidCog(commands.Cog, name="antiraid"):
         except discord.HTTPException:
             pass
 
+    async def _roles_to_silence(self, guild: discord.Guild) -> list[discord.Role]:
+        roles = [guild.default_role]
+        gcfg = await GuildConfig.load(self.bot.db, guild.id)
+        if gcfg.moderation.lockdown_include_member_role and gcfg.dashboard.member_role:
+            member_role = guild.get_role(gcfg.dashboard.member_role)
+            if member_role is not None:
+                roles.append(member_role)
+        return roles
+
     async def _trigger_lockdown(self, guild: discord.Guild, cfg: RaidConfig) -> None:
         if cfg.lockdown_active:
             return
         cfg.lockdown_active = True
         await cfg.save(self.bot)
-        locked = 0
-        for ch in guild.text_channels:
-            try:
-                await ch.set_permissions(
-                    guild.default_role, send_messages=False, reason="anti-raid lockdown"
-                )
-                locked += 1
-            except discord.HTTPException:
-                continue
+        roles = await self._roles_to_silence(guild)
+        locked = await lock_channels(
+            self.bot.db, guild, guild.text_channels, roles, reason="anti-raid lockdown"
+        )
         await self._log(
             guild,
             cfg,
-            f"**raid detected** — locked {locked} channel(s). run `/antiraid lockdown off` once it's clear.",
+            f"**raid detected** — locked {len(locked)} channel(s). run `/antiraid lockdown off` once it's clear.",
             0xED4245,
         )
-        log.warning("lockdown triggered in guild %s (%d channels locked)", guild.id, locked)
+        log.warning("lockdown triggered in guild %s (%d channels locked)", guild.id, len(locked))
 
     async def _lift_lockdown(self, guild: discord.Guild, cfg: RaidConfig) -> None:
         cfg.lockdown_active = False
         await cfg.save(self.bot)
-        for ch in guild.text_channels:
-            try:
-                await ch.set_permissions(guild.default_role, send_messages=None)
-            except discord.HTTPException:
-                continue
+        roles = await self._roles_to_silence(guild)
+        await unlock_channels(self.bot.db, guild, guild.text_channels, roles)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:

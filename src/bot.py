@@ -17,6 +17,11 @@ INITIAL_EXTENSIONS = (
     "src.cogs.twitch.cog",
     "src.cogs.music.queue",
     "src.cogs.music.cog",
+    "src.cogs.radio.cog",
+    "src.cogs.voice.cog",
+    "src.cogs.announcements.cog",
+    "src.cogs.messages.cog",
+    "src.cogs.greetings.cog",
     "src.cogs.misc.help",
     "src.cogs.dashboard.cog",
 )

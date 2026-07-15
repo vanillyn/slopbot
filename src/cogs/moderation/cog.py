@@ -13,9 +13,10 @@ from discord.ext import commands
 from src.data.config import GuildConfig
 from src.cogs.moderation.logging import log_infraction
 from src.cogs.moderation.infractions import add_infraction
-from src.permissions import has_permission
+from src.permissions import has_permission, grant, revoke
 from src.utils.ui import BaseLayout, ConfirmView
 from src.cogs.moderation.util import check_hierarchy, require_permission
+from src.cogs.moderation.lockdown import lock_channels, unlock_channels
 
 if TYPE_CHECKING:
     from src.bot import Bot
@@ -121,27 +122,50 @@ async def _schedule_slowmode_reset(
         pass
 
 
-async def _schedule_unmute(
-    guild: discord.Guild, user_id: int, role_id: int, after: timedelta
-) -> None:
-    await asyncio.sleep(after.total_seconds())
-    member = guild.get_member(user_id)
-    if member is None:
-        return
-    role = guild.get_role(role_id)
-    if role is None:
-        return
-    try:
-        await member.remove_roles(role, reason="mute duration expired")
-    except discord.HTTPException:
-        pass
-
-
 class ModerationActionsCog(commands.Cog, name="moderation"):
     def __init__(self, bot: "Bot") -> None:
         self.bot = bot
 
-    @app_commands.command(name="warn", description="warn a member")
+    mod = app_commands.Group(
+        name="mod",
+        description="moderation commands",
+        default_permissions=discord.Permissions(moderate_members=True),
+    )
+    permission = app_commands.Group(
+        name="permission",
+        description="grant or revoke moderation command access for a role",
+        parent=mod,
+        default_permissions=discord.Permissions(administrator=True),
+    )
+
+    @permission.command(name="grant", description="let a role use a moderation node")
+    @app_commands.describe(
+        role="role to grant access to",
+        node="permission node, e.g. moderation.kick, moderation.mute, moderation.purge",
+    )
+    async def permission_grant(
+        self, interaction: discord.Interaction, role: discord.Role, node: str
+    ) -> None:
+        if interaction.guild is None:
+            return
+        await grant(self.bot.db, interaction.guild.id, role.id, node)
+        await interaction.response.send_message(
+            f"granted `{node}` to {role.mention}", ephemeral=True
+        )
+
+    @permission.command(name="revoke", description="remove a role's access to a moderation node")
+    @app_commands.describe(role="role to revoke access from", node="permission node to remove")
+    async def permission_revoke(
+        self, interaction: discord.Interaction, role: discord.Role, node: str
+    ) -> None:
+        if interaction.guild is None:
+            return
+        await revoke(self.bot.db, interaction.guild.id, role.id, node)
+        await interaction.response.send_message(
+            f"revoked `{node}` from {role.mention}", ephemeral=True
+        )
+
+    @mod.command(name="warn", description="warn a member")
     @app_commands.describe(user="member to warn", reason="reason for the warning")
     @require_permission("moderation.warn")
     async def warn(
@@ -195,7 +219,7 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         else:
             await execute(interaction)
 
-    @app_commands.command(name="kick", description="kick a member")
+    @mod.command(name="kick", description="kick a member")
     @app_commands.describe(
         user="member to kick",
         reason="reason for the kick",
@@ -261,7 +285,7 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         else:
             await execute(interaction)
 
-    @app_commands.command(name="ban", description="ban a member")
+    @mod.command(name="ban", description="ban a member")
     @app_commands.describe(
         user="member to ban",
         reason="reason for the ban",
@@ -349,11 +373,11 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         else:
             await execute(interaction)
 
-    @app_commands.command(name="mute", description="mute a member")
+    @mod.command(name="mute", description="mute a member (discord timeout)")
     @app_commands.describe(
         user="member to mute",
         reason="reason for the mute",
-        duration="mute length (e.g. 1h, 7d)",
+        duration="mute length (e.g. 1h, 7d) — capped at 28 days by discord",
         quiet="skip logging and dm",
     )
     @require_permission("moderation.mute")
@@ -365,45 +389,27 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         duration: str | None = None,
         quiet: bool = False,
     ) -> None:
-        
         guild = interaction.guild
         moderator = interaction.user
         if guild is None or not isinstance(moderator, discord.Member):
             return
         check_hierarchy(user, moderator)
         cfg = await GuildConfig.load(self.bot.db, guild.id)
-        if cfg.moderation.mute_role is None:
-            await interaction.response.send_message(
-                "no mute role configured — set `moderation.mute.role` first",
-                ephemeral=True,
-            )
-            return
-        mute_role = interaction.guild.get_role(cfg.moderation.mute_role)
-        if mute_role is None:
-            await interaction.response.send_message(
-                "mute role not found — it may have been deleted", ephemeral=True
-            )
-            return
         actual_reason = reason or _pick(
             cfg.moderation.mute_default_reason, str(user)
         )
         raw_duration = duration or cfg.moderation.mute_default_duration
-        actual_duration = (
-            _parse_duration(raw_duration) if raw_duration else None
-        )
+        actual_duration = _parse_duration(raw_duration) if raw_duration else None
+        if actual_duration is None or actual_duration > _MAX_TIMEOUT:
+            actual_duration = _MAX_TIMEOUT
+
         async def execute(ci: discord.Interaction) -> None:
             await ci.response.defer(ephemeral=True)
             try:
-                await user.add_roles(mute_role, reason=actual_reason)
+                await user.timeout(actual_duration, reason=actual_reason)
             except discord.HTTPException as e:
                 await ci.followup.send(f"failed to mute: {e}", ephemeral=True)
                 return
-            if actual_duration is not None:
-                asyncio.create_task(
-                    _schedule_unmute(
-                        guild, user.id, mute_role.id, actual_duration
-                    )
-                )
             infraction = await add_infraction(
                 self.bot.db,
                 guild_id=guild.id,
@@ -412,9 +418,7 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
                 moderator_id=moderator.id,
                 infraction_type="mute",
                 reason=actual_reason,
-                duration=int(actual_duration.total_seconds())
-                if actual_duration
-                else None,
+                duration=int(actual_duration.total_seconds()),
             )
             if not quiet:
                 await _dm(user, cfg.moderation.mute_dm, actual_reason)
@@ -462,7 +466,30 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         else:
             await execute(interaction)
 
-    @app_commands.command(name="slowmode", description="set slowmode on a channel")
+    @mod.command(name="unmute", description="clear a member's timeout")
+    @app_commands.describe(user="member to unmute", reason="reason for lifting the mute")
+    @require_permission("moderation.mute")
+    async def unmute(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        reason: str | None = None,
+    ) -> None:
+        guild = interaction.guild
+        moderator = interaction.user
+        if guild is None or not isinstance(moderator, discord.Member):
+            return
+        if user.timed_out_until is None:
+            await interaction.response.send_message("that member isn't muted", ephemeral=True)
+            return
+        try:
+            await user.timeout(None, reason=reason or f"unmuted by {moderator}")
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"failed to unmute: {e}", ephemeral=True)
+            return
+        await interaction.response.send_message(f"unmuted {user.mention}", ephemeral=True)
+
+    @mod.command(name="slowmode", description="set slowmode on a channel")
     @app_commands.describe(
         interval="seconds between messages (0 to disable)",
         duration="how long to keep slowmode (e.g. 30m, 1h)",
@@ -563,7 +590,7 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         else:
             await execute(interaction)
 
-    @app_commands.command(
+    @mod.command(
         name="purge", description="bulk delete messages from a channel"
     )
     @app_commands.describe(
@@ -608,7 +635,7 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         layout.add_container(ui.TextDisplay("\n".join(lines)), accent_color=0x57F287)
         await interaction.followup.send(view=layout, ephemeral=True)
 
-    @app_commands.command(name="shutdown", description="locks a channel (or all channels) in case of a raid")
+    @mod.command(name="shutdown", description="locks a channel (or all channels) in case of a raid")
     @app_commands.describe(
         channel="channel to lock (defaults to current)",
         all_channels="lock every text channel in the server",
@@ -643,17 +670,15 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         actual_reason = reason or _pick(
             cfg.moderation.shutdown_default_reason, str(moderator)
         )
+        roles = [guild.default_role]
+        if cfg.moderation.lockdown_include_member_role and cfg.dashboard.member_role:
+            member_role = guild.get_role(cfg.dashboard.member_role)
+            if member_role is not None:
+                roles.append(member_role)
 
         await interaction.response.defer(ephemeral=True)
-        locked: list[discord.TextChannel] = []
-        for ch in targets:
-            try:
-                await ch.set_permissions(
-                    guild.default_role, send_messages=False, reason=actual_reason
-                )
-            except discord.HTTPException:
-                continue
-            locked.append(ch)
+        locked = await lock_channels(self.bot.db, guild, targets, roles, reason=actual_reason)
+        for ch in locked:
             infraction = await add_infraction(
                 self.bot.db,
                 guild_id=guild.id,
@@ -675,27 +700,46 @@ class ModerationActionsCog(commands.Cog, name="moderation"):
         )
         await interaction.followup.send(view=layout)
 
-    @app_commands.command(name="unshutdown", description="unlocks a channel after a shutdown")
-    @app_commands.describe(channel="channel to unlock (defaults to current)")
+    @mod.command(name="unshutdown", description="unlocks a channel (or all channels) after a shutdown")
+    @app_commands.describe(
+        channel="channel to unlock (defaults to current)",
+        all_channels="unlock every text channel in the server",
+    )
     @require_permission("moderation.shutdown")
     async def unshutdown(
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel | None = None,
+        all_channels: bool = False,
     ) -> None:
         guild = interaction.guild
         if guild is None:
             return
-        target = channel or (
-            interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
-        )
-        if target is None:
+
+        if all_channels:
+            targets = guild.text_channels
+        elif channel is not None:
+            targets = [channel]
+        elif isinstance(interaction.channel, discord.TextChannel):
+            targets = [interaction.channel]
+        else:
             await interaction.response.send_message(
                 "run this in a text channel or specify one", ephemeral=True
             )
             return
-        await target.set_permissions(guild.default_role, send_messages=None)
-        await interaction.response.send_message(f"unlocked {target.mention}", ephemeral=True)
+
+        cfg = await GuildConfig.load(self.bot.db, guild.id)
+        roles = [guild.default_role]
+        if cfg.moderation.lockdown_include_member_role and cfg.dashboard.member_role:
+            member_role = guild.get_role(cfg.dashboard.member_role)
+            if member_role is not None:
+                roles.append(member_role)
+
+        await interaction.response.defer(ephemeral=True)
+        unlocked = await unlock_channels(self.bot.db, guild, targets, roles)
+        await interaction.followup.send(
+            f"unlocked {len(unlocked)} channel(s), restored to how they were before"
+        )
 
 
 async def setup(bot: "Bot") -> None:

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import time
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -16,7 +14,13 @@ from src.data.button_containers import (
     get_containers,
     save_container,
 )
-from src.data.config import get_all_config, set_config, delete_config
+from src.data.config import (
+    get_all_config,
+    set_config,
+    delete_config,
+    get_moderation_config,
+    set_moderation_config,
+)
 from src.cogs.ticketing.cog import OpenTicketButton
 from src.cogs.ticketing.db import create_panel, get_ticket_panels, set_panel_message
 from src.utils.logger import get_logger
@@ -38,27 +42,6 @@ def _auth_header(request: web.Request) -> str | None:
     return auth[7:].strip() or None
 
 
-def _cors_headers(origin: str) -> dict[str, str]:
-    return {
-        "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    }
-
-
-@web.middleware
-async def cors_middleware(request: web.Request, handler: web.Handler) -> web.StreamResponse:
-    if request.method == "OPTIONS":
-        return web.Response(status=204)
-    response = await handler(request)
-    response.headers.update({
-        "Access-Control-Allow-Origin": request.headers.get("Origin", "*"),
-        "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    })
-    return response
-
-
 async def _fetch_discord_json(session: aiohttp.ClientSession, url: str, token: str) -> dict[str, object] | None:
     async with session.get(url, headers={"Authorization": f"Bearer {token}"}) as resp:
         if resp.status != 200:
@@ -75,17 +58,30 @@ def _is_admin_guild(guild_data: dict[str, object]) -> bool:
 
 
 class DashboardServer:
+    """the bot's one and only web server. serves the static dashboard frontend
+    (src/web/static/) plus a JSON API, guarded by discord oauth (implicit
+    grant — the frontend gets a user access token directly, no client secret
+    involved on the frontend side).
+
+    this can also be run headless: if you host the frontend elsewhere (e.g.
+    GitHub Pages or Cloudflare Pages) and just want the API, set
+    DASHBOARD_ORIGIN to that frontend's origin so CORS allows it through and
+    point the frontend's `window.COCO_API_BASE` at wherever this server is
+    reachable (see src/web/static/index.html).
+    """
+
     def __init__(self, bot: "Bot") -> None:
         self.bot = bot
-        self.config = BotConfig()
+        self.config = bot.config
         self.app = web.Application()
         self.app["bot"] = bot
         self.app["session"] = None
-        self.origin = os.environ.get("DASHBOARD_ORIGIN", "*")
+        self.origin = self.config.dashboard_origin
+        self._runner: web.AppRunner | None = None
 
         self.app.on_startup.append(self._on_startup)
         self.app.on_cleanup.append(self._on_cleanup)
-        self.app.middlewares.append(cors_middleware)
+        self.app.middlewares.append(self._cors_middleware)
 
         self._register_routes()
 
@@ -97,16 +93,19 @@ class DashboardServer:
         if session is not None and not session.closed:
             await session.close()
 
-    @staticmethod
-    async def _cors_middleware(request: web.Request, handler: web.Handler) -> web.StreamResponse:
+    @web.middleware
+    async def _cors_middleware(self, request: web.Request, handler: web.Handler) -> web.StreamResponse:
         if request.method == "OPTIONS":
-            return web.Response(status=204)
-        response = await handler(request)
-        response.headers.update({
-            "Access-Control-Allow-Origin": request.headers.get("Origin", "*"),
-            "Access-Control-Allow-Headers": "Authorization, Content-Type",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        })
+            response: web.StreamResponse = web.Response(status=204)
+        else:
+            response = await handler(request)
+        response.headers.update(
+            {
+                "Access-Control-Allow-Origin": self.origin,
+                "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            }
+        )
         return response
 
     def _register_routes(self) -> None:
@@ -115,6 +114,8 @@ class DashboardServer:
         self.app.router.add_get("/api/guilds", self._handle_guilds)
         self.app.router.add_get("/api/guild/{guild_id}/config", self._handle_get_config)
         self.app.router.add_post("/api/guild/{guild_id}/config", self._handle_set_config)
+        self.app.router.add_get("/api/guild/{guild_id}/moderation", self._handle_get_moderation)
+        self.app.router.add_post("/api/guild/{guild_id}/moderation", self._handle_set_moderation)
         self.app.router.add_get("/api/guild/{guild_id}/channels", self._handle_get_channels)
         self.app.router.add_get("/api/guild/{guild_id}/roles", self._handle_get_roles)
         self.app.router.add_get("/api/guild/{guild_id}/ticket_panels", self._handle_get_ticket_panels)
@@ -124,18 +125,19 @@ class DashboardServer:
         self.app.router.add_delete("/api/guild/{guild_id}/containers/{name}", self._handle_delete_container)
         self.app.router.add_get("/api/guild/{guild_id}/state", self._handle_get_state)
         self.app.router.add_post("/api/guild/{guild_id}/actions/{action}", self._handle_action)
+        self.app.router.add_get("/api/config", self._handle_public_config)
 
     async def start(self) -> None:
-        runner = web.AppRunner(self.app)
-        await runner.setup()
-        site = web.TCPSite(runner, self.config.dashboard_host, self.config.dashboard_port)
+        self._runner = web.AppRunner(self.app)
+        await self._runner.setup()
+        site = web.TCPSite(self._runner, self.config.dashboard_host, self.config.dashboard_port)
         await site.start()
         log.info("dashboard available at http://%s:%s", self.config.dashboard_host, self.config.dashboard_port)
 
     async def stop(self) -> None:
-        runners = [r for r in self.app._runners]  # type: ignore[attr-defined]
-        for runner in runners:
-            await runner.cleanup()
+        if self._runner is not None:
+            await self._runner.cleanup()
+            self._runner = None
 
     async def _authenticated_user(self, request: web.Request) -> tuple[str, str] | web.Response:
         token = _auth_header(request)
@@ -160,6 +162,11 @@ class DashboardServer:
         if not any(str(g.get("id")) == guild_id_str and _is_admin_guild(g) for g in guilds):
             return web.json_response({"error": "forbidden"}, status=403)
         return None
+
+    async def _handle_public_config(self, request: web.Request) -> web.Response:
+        """unauthenticated — tells the frontend which discord client id to use for
+        the oauth redirect, so it doesn't need to be hardcoded in static JS."""
+        return web.json_response({"discord_client_id": self.config.discord_client_id})
 
     async def _handle_guilds(self, request: web.Request) -> web.Response:
         auth = await self._authenticated_user(request)
@@ -214,6 +221,31 @@ class DashboardServer:
                 await delete_config(self.bot.db, guild_id, key)
             else:
                 await set_config(self.bot.db, guild_id, key, str(value))
+        return web.json_response({"ok": True})
+
+    async def _handle_get_moderation(self, request: web.Request) -> web.Response:
+        auth = await self._authenticated_user(request)
+        if isinstance(auth, web.Response):
+            return auth
+        token, user_id = auth
+        guild_id_str = request.match_info["guild_id"]
+        denied = await self._check_guild_access(token, user_id, guild_id_str)
+        if denied:
+            return denied
+        config = await get_moderation_config(self.bot.db, int(guild_id_str))
+        return web.json_response(config)
+
+    async def _handle_set_moderation(self, request: web.Request) -> web.Response:
+        auth = await self._authenticated_user(request)
+        if isinstance(auth, web.Response):
+            return auth
+        token, user_id = auth
+        guild_id_str = request.match_info["guild_id"]
+        denied = await self._check_guild_access(token, user_id, guild_id_str)
+        if denied:
+            return denied
+        payload = await request.json()
+        await set_moderation_config(self.bot.db, int(guild_id_str), payload)
         return web.json_response({"ok": True})
 
     async def _handle_get_channels(self, request: web.Request) -> web.Response:
@@ -297,7 +329,7 @@ class DashboardServer:
                 return web.json_response({"error": "music disabled"}, status=500)
             voice_channel_id = int(payload.get("voice_channel_id", 0))
             voice_channel = guild.get_channel(voice_channel_id) if voice_channel_id else None
-            ok, message = await music_cog.queue_from_url(guild_id, url, voice_channel if isinstance(voice_channel, discord.VoiceChannel) else None)  # type: ignore[arg-defined]
+            ok, message = await music_cog.queue_from_url(guild_id, url, voice_channel if isinstance(voice_channel, discord.VoiceChannel) else None)  # type: ignore[attr-defined]
             return web.json_response({"ok": ok, "message": message})
 
         if action == "pause":
@@ -471,7 +503,7 @@ class DashboardServer:
     async def _serve_static(self, request: web.Request) -> web.Response:
         filename = request.match_info["filename"]
         path = os.path.join(os.path.dirname(__file__), "static", filename)
-        if not os.path.exists(path):
+        if not os.path.exists(path) or ".." in filename:
             raise web.HTTPNotFound()
         content_type = "text/plain"
         if filename.endswith(".js"):

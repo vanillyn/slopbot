@@ -10,8 +10,6 @@ log = get_logger("twitch.api")
 
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID", "")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET", "")
-TWITCH_WEBHOOK_SECRET = os.getenv("TWITCH_WEBHOOK_SECRET", "")
-TWITCH_CALLBACK_URL = os.getenv("TWITCH_CALLBACK_URL", "")
 
 
 class TwitchClient:
@@ -96,7 +94,10 @@ class TwitchClient:
         data = await resp.json()
         return int(data.get("total", 0))
 
-    async def subscribe_to_stream_online(self, broadcaster_user_id: str) -> str | None:
+    async def subscribe_to_stream_online_ws(self, broadcaster_user_id: str, session_id: str) -> str | None:
+        """subscribe using websocket transport — the subscription is delivered to
+        the eventsub websocket connection identified by `session_id`, no public
+        callback url involved."""
         resp = await self._request(
             "POST",
             "https://api.twitch.tv/helix/eventsub/subscriptions",
@@ -104,11 +105,7 @@ class TwitchClient:
                 "type": "stream.online",
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id},
-                "transport": {
-                    "method": "webhook",
-                    "callback": TWITCH_CALLBACK_URL,
-                    "secret": TWITCH_WEBHOOK_SECRET,
-                },
+                "transport": {"method": "websocket", "session_id": session_id},
             },
         )
         if resp.status != 202:
@@ -118,6 +115,8 @@ class TwitchClient:
         return data["data"][0]["id"]
 
     async def unsubscribe(self, subscription_id: str) -> None:
+        if not subscription_id:
+            return
         await self._request(
             "DELETE",
             "https://api.twitch.tv/helix/eventsub/subscriptions",

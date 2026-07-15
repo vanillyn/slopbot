@@ -12,8 +12,8 @@ from src.cogs.twitch.db import (
     remove_streamer,
     update_streamer,
 )
+from src.cogs.twitch.eventsub import EventSubWebSocket
 from src.cogs.twitch.notifications import send_live_notification
-from src.cogs.twitch.webserver import WebhookServer
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -289,24 +289,20 @@ class ConfigView(discord.ui.View):
 
 
 class TwitchCog(commands.Cog, name="twitch"):
+    """twitch live-notification tracking. subscriptions are delivered over
+    EventSub's websocket transport (`eventsub.py`) — there is no public
+    server or webhook secret to configure. see the README for setup."""
+
     def __init__(self, bot: "Bot") -> None:
         self.bot = bot
-        self._webhook_server: WebhookServer | None = None
+        self.eventsub = EventSubWebSocket(bot.twitch, self._on_stream_online)
 
     async def cog_load(self) -> None:
         await self.bot.twitch.start()
-        if self.bot.config.twitch_webhook_enabled:
-            self._webhook_server = WebhookServer(
-                self._on_stream_online,
-                host=self.bot.config.webhook_host,
-                port=self.bot.config.webhook_port,
-                bot=self.bot,
-            )
-            await self._webhook_server.start()
+        await self.eventsub.start()
 
     async def cog_unload(self) -> None:
-        if self._webhook_server is not None:
-            await self._webhook_server.stop()
+        await self.eventsub.stop()
         await self.bot.twitch.close()
 
     async def _on_stream_online(self, broadcaster_id: str) -> None:
@@ -330,7 +326,7 @@ class TwitchCog(commands.Cog, name="twitch"):
             await ctx.send(f"{display_name} is already being tracked")
             return
         await add_streamer(self.bot.db, user_id, display_name, ctx.channel.id, ctx.guild.id)
-        sub_id = await self.bot.twitch.subscribe_to_stream_online(user_id)
+        sub_id = await self.eventsub.subscribe(user_id)
         if sub_id:
             await update_streamer(self.bot.db, user_id, guild_id=ctx.guild.id, subscription_id=sub_id)
         user_info = await self.bot.twitch.get_user_info(user_id)

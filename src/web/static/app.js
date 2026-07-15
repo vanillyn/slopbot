@@ -1,16 +1,26 @@
+// API_BASE lets this page be hosted anywhere (GitHub Pages, Cloudflare Pages,
+// same server as the bot, whatever) and still talk to the bot's dashboard
+// API. Set window.COCO_API_BASE in index.html's inline <script> tag when the
+// two aren't on the same origin. Empty string = same origin as this page.
+const API_BASE = window.COCO_API_BASE || "";
+
 const state = {
   guilds: [],
   selectedGuild: null,
   token: null,
+  clientId: null,
 };
 
 const elements = {
   loginButton: document.getElementById("login-button"),
   logoutButton: document.getElementById("logout-button"),
+  landingHero: document.getElementById("landing-hero"),
   guildList: document.getElementById("guild-list"),
   dashboardRoot: document.getElementById("dashboard-root"),
   configPanel: document.getElementById("config-panel"),
   actionsPanel: document.getElementById("actions-panel"),
+  ticketPanel: document.getElementById("ticket-panel"),
+  containersPanel: document.getElementById("containers-panel"),
   backButton: document.getElementById("back-button"),
   actionsBack: document.getElementById("actions-back"),
   saveConfig: document.getElementById("save-config"),
@@ -34,13 +44,27 @@ const elements = {
   ticketPanelDescription: document.getElementById("ticket-panel-description"),
   ticketPanelsList: document.getElementById("ticket-panels-list"),
   createTicketPanel: document.getElementById("create-ticket-panel"),
-  containersPanel: document.getElementById("containers-panel"),
-  containersBack: document.getElementById("containers-back"),
   containerName: document.getElementById("container-name"),
   containerAccent: document.getElementById("container-accent"),
   containerItems: document.getElementById("container-items"),
   containerList: document.getElementById("container-list"),
   saveContainer: document.getElementById("save-container"),
+  containersBack: document.getElementById("containers-back"),
+  moderationButton: document.getElementById("moderation-button"),
+  moderationPanel: document.getElementById("moderation-panel"),
+  moderationBack: document.getElementById("moderation-back"),
+  muteRole: document.getElementById("mute-role"),
+  muteChannel: document.getElementById("mute-channel"),
+  requireConfirm: document.getElementById("require-confirm"),
+  warnDm: document.getElementById("warn-dm"),
+  warnChannel: document.getElementById("warn-channel"),
+  kickDm: document.getElementById("kick-dm"),
+  kickChannel: document.getElementById("kick-channel"),
+  banDm: document.getElementById("ban-dm"),
+  banChannel: document.getElementById("ban-channel"),
+  muteDm: document.getElementById("mute-dm"),
+  muteChannelMsg: document.getElementById("mute-channel-msg"),
+  saveModeration: document.getElementById("save-moderation"),
 };
 
 function authHeaders() {
@@ -50,13 +74,13 @@ function authHeaders() {
   };
 }
 
-async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+async function fetchJson(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, options);
   return response.json();
 }
 
 function setPanelVisible(panel, visible) {
-  panel.hidden = !visible;
+  if (panel) panel.hidden = !visible;
 }
 
 function hideAllPanels() {
@@ -65,6 +89,15 @@ function hideAllPanels() {
   setPanelVisible(elements.actionsPanel, false);
   setPanelVisible(elements.ticketPanel, false);
   setPanelVisible(elements.containersPanel, false);
+  setPanelVisible(elements.moderationPanel, false);
+}
+
+function showPanel(panel) {
+  hideAllPanels();
+  setPanelVisible(panel, true);
+  if (panel === elements.ticketPanel) loadTicketPanels();
+  if (panel === elements.containersPanel) loadContainers();
+  if (panel === elements.moderationPanel) loadModeration();
 }
 
 function buildGuildCard(guild) {
@@ -75,11 +108,8 @@ function buildGuildCard(guild) {
   return card;
 }
 
-function resetPanels() {
-  hideAllPanels();
-}
-
 function fillSelect(select, items, selectedValue) {
+  if (!select) return;
   select.innerHTML = "<option value=''>none</option>";
   items.forEach((item) => {
     const option = document.createElement("option");
@@ -88,6 +118,15 @@ function fillSelect(select, items, selectedValue) {
     if (item.id === selectedValue) option.selected = true;
     select.appendChild(option);
   });
+}
+
+async function loadPublicConfig() {
+  try {
+    const config = await fetchJson("/api/config");
+    state.clientId = config.discord_client_id || null;
+  } catch (error) {
+    console.error("could not load public config", error);
+  }
 }
 
 async function loadGuilds() {
@@ -102,7 +141,8 @@ async function loadGuilds() {
     elements.guildList.appendChild(buildGuildCard(guild));
   });
   elements.guildName.textContent = "select a server";
-  setPanelVisible(elements.dashboardRoot, true);
+  setPanelVisible(elements.landingHero, false);
+  showPanel(elements.dashboardRoot);
 }
 
 async function selectGuild(guild) {
@@ -110,8 +150,7 @@ async function selectGuild(guild) {
   elements.selectedGuildTitle.textContent = `${guild.name} settings`;
   elements.guildName.textContent = guild.name;
   await loadRolesAndChannels(guild.id);
-  resetPanels();
-  setPanelVisible(elements.configPanel, true);
+  showPanel(elements.configPanel);
 }
 
 async function loadRolesAndChannels(guildId) {
@@ -120,17 +159,6 @@ async function loadRolesAndChannels(guildId) {
     fetchJson(`/api/guild/${guildId}/channels`, { headers: authHeaders() }),
     fetchJson(`/api/guild/${guildId}/config`, { headers: authHeaders() }),
   ]);
-
-  function fillSelect(select, items, selectedValue) {
-    select.innerHTML = "<option value=''>none</option>";
-    items.forEach((item) => {
-      const option = document.createElement("option");
-      option.value = item.id;
-      option.textContent = item.name;
-      if (item.id === selectedValue) option.selected = true;
-      select.appendChild(option);
-    });
-  }
 
   fillSelect(elements.moderatorRole, roles, config.moderator_role || "");
   fillSelect(elements.adminRole, roles, config.admin_role || "");
@@ -168,21 +196,78 @@ async function saveConfig() {
   }
 }
 
-function showActionsPanel() {
-  resetPanels();
-  setPanelVisible(elements.actionsPanel, true);
+function linesToList(value) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
-function showPanel(panel) {
-  resetPanels();
-  setPanelVisible(panel, true);
+function listToLines(items) {
+  return (items || []).join("\n");
+}
+
+async function loadModeration() {
+  if (!state.selectedGuild) return;
+  const guildId = state.selectedGuild.id;
+  const [roles, channels, mod] = await Promise.all([
+    fetchJson(`/api/guild/${guildId}/roles`, { headers: authHeaders() }),
+    fetchJson(`/api/guild/${guildId}/channels`, { headers: authHeaders() }),
+    fetchJson(`/api/guild/${guildId}/moderation`, { headers: authHeaders() }),
+  ]);
+  if (mod.error) {
+    alert(mod.error);
+    return;
+  }
+  fillSelect(elements.muteRole, roles, mod.mute_role || "");
+  fillSelect(elements.muteChannel, channels.filter((c) => c.type === "text"), mod.mute_channel || "");
+  elements.requireConfirm.checked = Boolean(mod.require_confirm);
+  elements.warnDm.value = listToLines(mod.warn_dm);
+  elements.warnChannel.value = listToLines(mod.warn_channel);
+  elements.kickDm.value = listToLines(mod.kick_dm);
+  elements.kickChannel.value = listToLines(mod.kick_channel);
+  elements.banDm.value = listToLines(mod.ban_dm);
+  elements.banChannel.value = listToLines(mod.ban_channel);
+  elements.muteDm.value = listToLines(mod.mute_dm);
+  elements.muteChannelMsg.value = listToLines(mod.mute_channel_msg);
+}
+
+async function saveModeration() {
+  if (!state.selectedGuild) return;
+  const payload = {
+    mute_role: elements.muteRole.value || null,
+    mute_channel: elements.muteChannel.value || null,
+    require_confirm: elements.requireConfirm.checked,
+    warn_dm: linesToList(elements.warnDm.value),
+    warn_channel: linesToList(elements.warnChannel.value),
+    kick_dm: linesToList(elements.kickDm.value),
+    kick_channel: linesToList(elements.kickChannel.value),
+    ban_dm: linesToList(elements.banDm.value),
+    ban_channel: linesToList(elements.banChannel.value),
+    mute_dm: linesToList(elements.muteDm.value),
+    mute_channel_msg: linesToList(elements.muteChannelMsg.value),
+  };
+  const result = await fetchJson(`/api/guild/${state.selectedGuild.id}/moderation`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (result.ok) {
+    alert("moderation settings saved");
+  } else {
+    alert(result.error || "failed to save moderation settings");
+  }
+}
+
+function showActionsPanel() {
+  showPanel(elements.actionsPanel);
 }
 
 function renderList(container, items, renderItem) {
+  if (!container) return;
   container.innerHTML = "";
   items.forEach((item) => {
-    const element = renderItem(item);
-    container.appendChild(element);
+    container.appendChild(renderItem(item));
   });
 }
 
@@ -271,8 +356,8 @@ async function saveContainer() {
 
 function signOut() {
   state.token = null;
-  resetPanels();
-  elements.dashboardRoot.hidden = true;
+  hideAllPanels();
+  setPanelVisible(elements.landingHero, true);
   elements.loginButton.hidden = false;
 }
 
@@ -299,22 +384,18 @@ async function executeAction(action) {
   }
 }
 
-function showPanel(panel) {
-  resetPanels();
-  setPanelVisible(panel, true);
-  if (panel === elements.ticketPanel) {
-    loadTicketPanels();
-  }
-  if (panel === elements.containersPanel) {
-    loadContainers();
-  }
-}
-
 function initEvents() {
   elements.loginButton.addEventListener("click", () => {
-    const clientId = "1523841754556530808";
-    const redirect = encodeURIComponent(`${window.location.origin}/`);
-    window.location.href = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirect}&response_type=token&scope=identify%20guilds`;
+    if (!state.clientId) {
+      alert("this dashboard isn't fully configured yet — DISCORD_CLIENT_ID is missing on the bot.");
+      return;
+    }
+    // Discord matches redirect_uri with exact string comparison — no normalizing
+    // of trailing slashes. Always send bare origin (no path, no trailing slash)
+    // and register *exactly* that in the Discord Developer Portal, e.g.
+    // "http://localhost:8081" — not "http://localhost:8081/".
+    const redirect = encodeURIComponent(window.location.origin);
+    window.location.href = `https://discord.com/api/oauth2/authorize?client_id=${state.clientId}&redirect_uri=${redirect}&response_type=token&scope=identify%20guilds`;
   });
 
   elements.logoutButton.addEventListener("click", signOut);
@@ -324,16 +405,19 @@ function initEvents() {
   elements.actionPanel.addEventListener("click", showActionsPanel);
   elements.ticketPanelsButton.addEventListener("click", () => showPanel(elements.ticketPanel));
   elements.containersButton.addEventListener("click", () => showPanel(elements.containersPanel));
+  elements.moderationButton.addEventListener("click", () => showPanel(elements.moderationPanel));
   elements.ticketPanelBack.addEventListener("click", () => showPanel(elements.configPanel));
   elements.containersBack.addEventListener("click", () => showPanel(elements.configPanel));
+  elements.moderationBack.addEventListener("click", () => showPanel(elements.configPanel));
   elements.createTicketPanel.addEventListener("click", createTicketPanel);
   elements.saveContainer.addEventListener("click", saveContainer);
+  elements.saveModeration.addEventListener("click", saveModeration);
   document.querySelectorAll(".tile-action").forEach((button) => {
     button.addEventListener("click", () => executeAction(button.dataset.action));
   });
 }
 
-function parseToken() {
+function parseTokenFromHash() {
   const hash = window.location.hash.substring(1);
   const params = new URLSearchParams(hash);
   if (params.has("access_token")) {
@@ -344,5 +428,16 @@ function parseToken() {
   }
 }
 
-initEvents();
-parseToken();
+async function init() {
+  await loadPublicConfig();
+  // token parsing runs first and on its own — a bug in a click handler down
+  // the line should never be able to eat the discord redirect again.
+  parseTokenFromHash();
+  try {
+    initEvents();
+  } catch (error) {
+    console.error("failed to wire up dashboard controls", error);
+  }
+}
+
+init();

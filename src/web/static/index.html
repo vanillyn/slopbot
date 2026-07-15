@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <title>coco</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
       // If you're hosting this page separately from the bot (GitHub Pages,
@@ -11,7 +11,7 @@
       // actually runs, e.g. "https://coco.duckdns.org:8081". Leave it blank
       // to call the same origin this page is served from (the default when
       // the bot serves this file itself).
-      window.COCO_API_BASE = "http://localhost:8081";
+      window.COCO_API_BASE = "";
     </script>
   </head>
   <body>
@@ -25,8 +25,8 @@
             <span class="brand-name">coco</span>
           </div>
           <nav class="nav-links">
-            <a href="https://github.com/" id="invite-link">invite</a>
-            <a href="https://github.com/" id="docs-link">docs</a>
+            <a href="https://discord.com/oauth2/authorize?client_id=1523841754556530808&redirect_uri=https%3A%2F%2Fcoco.aichi.me&response_type=token&scope=identify%20guilds" id="invite-link">invite</a>
+            <a href="/docs" id="docs-link">docs</a>
             <button id="login-button" class="button button-secondary">log in</button>
           </nav>
         </header>
@@ -36,8 +36,14 @@
           <p class="tagline">discord anti-raid and moderation bot for private servers. fully open-source and self hostable. also sings.</p>
           <div class="hero-actions">
             <button id="invite-button" class="button button-primary">add to your forest!</button>
-            <a class="button button-tertiary" href="https://github.com/" id="source-link">view source code</a>
+            <a class="button button-tertiary" href="https://github.com/vanillyn" id="source-link">view source code</a>
           </div>
+                  <section>
+          <div class="hero-actions">
+            <button class="button button-secondary" style="scale: 0.8;background: #5865F2;">join the discord!</button>
+          </div>
+          <iframe src="https://discord.com/widget?id=1523758142415048814&theme=dark" width="350" height="500" allowtransparency="true" frameborder="0" sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
+        </section>
         </section>
 
         <section class="panel" id="dashboard-root" hidden>
@@ -276,6 +282,6 @@
         </footer>
       </div>
     </div>
-    <script src="/app.js"></script>
+    <script src="./app.js"></script>
   </body>
 </html>

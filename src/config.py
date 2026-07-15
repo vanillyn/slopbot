@@ -29,4 +29,15 @@ class BotConfig:
     # some setups, so prefer setting a real origin once deployed.
     dashboard_origin: str = os.getenv("DASHBOARD_ORIGIN", "*")
 
+    # twitch EventSub webhook listener (src/cogs/twitch/webserver.py) — required
+    # to track streamers other than the app owner; see TWITCH_WEBHOOK_SECRET.
+    # runs on its own port, separate from the dashboard above.
+    twitch_webhook_enabled: bool = _bool("TWITCH_WEBHOOK_ENABLED", True)
+    twitch_webhook_host: str = os.getenv("TWITCH_WEBHOOK_HOST", "0.0.0.0")
+    twitch_webhook_port: int = int(os.getenv("TWITCH_WEBHOOK_PORT", "8082"))
+    # public https url twitch will POST event deliveries to, e.g.
+    # https://flowerco.aichi.me:8082/webhook/twitch — must be reachable from
+    # the internet and match whatever port/host this process binds above.
+    twitch_webhook_callback_url: str = os.getenv("TWITCH_WEBHOOK_CALLBACK_URL", "")
+
     discord_client_id: str = os.getenv("DISCORD_CLIENT_ID", "")

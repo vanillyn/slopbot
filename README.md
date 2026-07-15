@@ -34,7 +34,8 @@ discordbot/
         ├── twitch/
         │   ├── cog.py           setup/edit/untrack/testlive commands
         │   ├── api.py           TwitchClient (one aiohttp session, token refresh)
-        │   ├── eventsub.py       EventSub over WebSocket — no public server needed
+        │   ├── eventsub.py       EventSub over WebSocket — unused by default, own-channel only (see below)
+        │   ├── webserver.py      EventSub webhook receiver — used by default, works for any streamer
         │   ├── notifications.py live-notification layout builder
         │   └── db.py
         ├── music/
@@ -66,31 +67,44 @@ no new table, no migration, and it round-trips through `to_dict()` for the dashb
 migrations for older databases (e.g. `twitch_streamers` gaining a `guild_id` column for
 multi-guild support without losing existing rows).
 
-## twitch live notifications — no public server required
+## twitch live notifications — webhook transport (works for any streamer)
 
-The old setup needed a public HTTPS callback URL, a webhook secret, and (for local testing)
-something like DuckDNS + a reverse proxy just to receive Twitch's `stream.online` events.
+There are two ways to receive Twitch's `stream.online` EventSub events, and this bot has code
+for both — pick based on whether you need to track streamers besides yourself:
 
-That's gone. `src/cogs/twitch/eventsub.py` uses **EventSub over WebSocket**: the bot opens
-one outbound connection to `wss://eventsub.wss.twitch.tv/ws`, and Twitch pushes events over
-that connection directly. There is nothing to expose to the internet — this works identically
-whether the bot runs on your laptop, behind NAT, or on a VPS.
+- **Webhook transport** (`src/cogs/twitch/webserver.py`) — Twitch POSTs events to a public
+  HTTPS URL you host. Uses an app access token, so it works for **any broadcaster**, not just
+  the app owner. **This is the default.** Requires a public URL and a webhook secret.
+- **WebSocket transport** (`src/cogs/twitch/eventsub.py`) — the bot opens one outbound
+  connection to `wss://eventsub.wss.twitch.tv/ws` and Twitch pushes events over it. Nothing to
+  expose to the internet, but with an app access token this transport only delivers events for
+  broadcasters who've separately authorized your app via user OAuth — in practice that means it
+  only reliably works for your own channel. Trying to `/setup` someone else's channel on this
+  transport returns a 400 from Twitch's subscribe call. Left in the codebase but not wired up
+  by default; swap it back into `TwitchCog.__init__` if you only ever need to track yourself
+  and would rather not run a public listener.
 
-Setup is just:
+Setup for the default (webhook) path:
 
 1. Create a Twitch application at <https://dev.twitch.tv/console/apps> (any redirect URL
    works, it's unused for this flow — App Access Token / client-credentials grant only).
-2. Put the client id/secret in `.env`:
+2. You need a public HTTPS URL pointed at this process. Put the following in `.env`:
    ```
    TWITCH_CLIENT_ID=...
    TWITCH_CLIENT_SECRET=...
+   TWITCH_WEBHOOK_SECRET=some-long-random-string     # you make this up, used to verify deliveries
+   TWITCH_WEBHOOK_CALLBACK_URL=https://your-domain/webhook/twitch
+   TWITCH_WEBHOOK_PORT=8082                          # must match whatever your public url routes to
    ```
-3. `/setup <username>` in a server. That's it — no callback URL, no webhook secret, no
-   port forwarding.
+   The callback URL must resolve to this process's `TWITCH_WEBHOOK_HOST:TWITCH_WEBHOOK_PORT`
+   with path `/webhook/twitch`. If you're binding a port directly (no reverse proxy), make sure
+   it's the port that's actually forwarded/exposed to the internet, and that Twitch can reach
+   it over HTTPS — EventSub webhook subscriptions require `https://`, not plain `http://`.
+3. `/setup <username>` in a server. Any streamer, not just yourself.
 
-(The client-credentials/webhook-secret env vars for the old callback flow —
-`TWITCH_WEBHOOK_SECRET`, `TWITCH_CALLBACK_URL`, `TWITCH_WEBHOOK_ENABLED`, `WEBHOOK_HOST`,
-`WEBHOOK_PORT` — are gone; delete them from your `.env` if you have an old one.)
+This replaces an older iteration of the bot that used websocket transport exclusively and
+recommended deleting `webserver.py` entirely — that guidance no longer applies since webhook
+transport is what makes multi-streamer tracking work.
 
 ## dashboard
 
@@ -100,11 +114,11 @@ OAuth (implicit grant — the browser gets a user token directly, no client secr
 frontend).
 
 There used to be a second, unauthenticated HTML dashboard baked into the Twitch webhook
-listener (`webserver.py`'s `_build_dashboard_page`). That's been removed — it was dead weight
-duplicating this one and a likely source of "the dashboard breaks locally" confusion, since it
-ran on a separate port with none of the guild-access checks the real dashboard has.
-Delete `src/cogs/twitch/webserver.py` and `tests/test_webserver_dashboard.py` if you still have
-them from before this change.
+listener (`webserver.py`'s old `_build_dashboard_page`). That's been removed for good — it
+duplicated this one and ran on a separate port with none of the guild-access checks the real
+dashboard has. `webserver.py` itself is still around and in active use, but now it's a minimal
+single-route EventSub webhook receiver (see the twitch section above), nothing dashboard-shaped
+left in it.
 
 ### running it locally
 
@@ -148,8 +162,10 @@ needed for the frontend itself). Then either:
      CORS allows the static frontend through.
   3. Add that same static-hosting URL as a redirect URI on your Discord application.
 
-Twitch notifications need none of this — see the section above, it's a plain outbound
-connection either way.
+Twitch notifications need a public URL too, by default — see the section above. If you'd
+rather avoid exposing anything and only need your own channel, switch `TwitchCog` back to the
+websocket transport (`eventsub.py`), which is a plain outbound connection and needs none of
+this.
 
 ### testing purely on localhost (no tunnel at all)
 

@@ -20,12 +20,7 @@ _COLORS = {
 
 
 async def log_infraction(db: Database, guild: discord.Guild, infraction: Infraction) -> None:
-    row = await db.fetchone(
-        "select log_channel_id from mod_config where guild_id = ?", (guild.id,)
-    )
-    if row is None or not int(row[0]):
-        return
-    channel = guild.get_channel(int(row[0]))
+    channel = guild.get_channel(1523774868158414848)
     if not isinstance(channel, discord.TextChannel):
         return
 

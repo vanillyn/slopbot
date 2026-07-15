@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
+from src.cogs.twitch.api import TWITCH_WEBHOOK_SECRET
 from src.cogs.twitch.db import (
     add_streamer,
     get_streamer,
@@ -12,8 +13,8 @@ from src.cogs.twitch.db import (
     remove_streamer,
     update_streamer,
 )
-from src.cogs.twitch.eventsub import EventSubWebSocket
 from src.cogs.twitch.notifications import send_live_notification
+from src.cogs.twitch.webserver import TwitchWebhookServer
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -290,19 +291,33 @@ class ConfigView(discord.ui.View):
 
 class TwitchCog(commands.Cog, name="twitch"):
     """twitch live-notification tracking. subscriptions are delivered over
-    EventSub's websocket transport (`eventsub.py`) — there is no public
-    server or webhook secret to configure. see the README for setup."""
+    EventSub's webhook transport (`webserver.py`) — this requires a public
+    https callback url (TWITCH_WEBHOOK_CALLBACK_URL) and a shared secret
+    (TWITCH_WEBHOOK_SECRET), but works for any broadcaster rather than just
+    the app owner. see the README for setup."""
 
     def __init__(self, bot: "Bot") -> None:
         self.bot = bot
-        self.eventsub = EventSubWebSocket(bot.twitch, self._on_stream_online)
+        self.webhook_server = TwitchWebhookServer(
+            self._on_stream_online,
+            host=bot.config.twitch_webhook_host,
+            port=bot.config.twitch_webhook_port,
+        )
 
     async def cog_load(self) -> None:
         await self.bot.twitch.start()
-        await self.eventsub.start()
+        if self.bot.config.twitch_webhook_enabled:
+            if not self.bot.config.twitch_webhook_callback_url:
+                log.warning(
+                    "TWITCH_WEBHOOK_CALLBACK_URL is not set — /twitch setup will fail to"
+                    " subscribe until it's configured"
+                )
+            await self.webhook_server.start()
+        else:
+            log.info("twitch webhook listener disabled by configuration")
 
     async def cog_unload(self) -> None:
-        await self.eventsub.stop()
+        await self.webhook_server.stop()
         await self.bot.twitch.close()
 
     async def _on_stream_online(self, broadcaster_id: str) -> None:
@@ -317,6 +332,12 @@ class TwitchCog(commands.Cog, name="twitch"):
         if ctx.guild is None:
             await ctx.send("this command only works in a server")
             return
+        if not self.bot.config.twitch_webhook_callback_url:
+            await ctx.send(
+                "TWITCH_WEBHOOK_CALLBACK_URL isn't configured — set it in .env"
+                " (e.g. https://flowerco.aichi.me:8082/webhook/twitch) and restart before tracking streamers"
+            )
+            return
         result = await self.bot.twitch.get_user_id(username)
         if result is None:
             await ctx.send(f"couldn't find twitch user '{username}'")
@@ -326,9 +347,18 @@ class TwitchCog(commands.Cog, name="twitch"):
             await ctx.send(f"{display_name} is already being tracked")
             return
         await add_streamer(self.bot.db, user_id, display_name, ctx.channel.id, ctx.guild.id)
-        sub_id = await self.eventsub.subscribe(user_id)
+        sub_id = await self.bot.twitch.subscribe_to_stream_online_webhook(
+            user_id,
+            self.bot.config.twitch_webhook_callback_url,
+            TWITCH_WEBHOOK_SECRET,
+        )
         if sub_id:
             await update_streamer(self.bot.db, user_id, guild_id=ctx.guild.id, subscription_id=sub_id)
+        else:
+            await ctx.send(
+                f"added **{display_name}**, but the eventsub subscription failed —"
+                " check the bot logs and that TWITCH_WEBHOOK_CALLBACK_URL is publicly reachable"
+            )
         user_info = await self.bot.twitch.get_user_info(user_id)
         profile_pic = str(user_info["profile_image_url"]) if user_info else ""
         embed = await build_config_embed(self.bot, user_id, profile_pic, ctx.guild.id)

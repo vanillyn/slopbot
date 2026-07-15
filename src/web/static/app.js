@@ -1,7 +1,3 @@
-// API_BASE lets this page be hosted anywhere (GitHub Pages, Cloudflare Pages,
-// same server as the bot, whatever) and still talk to the bot's dashboard
-// API. Set window.COCO_API_BASE in index.html's inline <script> tag when the
-// two aren't on the same origin. Empty string = same origin as this page.
 const API_BASE = window.COCO_API_BASE || "";
 
 const state = {
@@ -429,10 +425,7 @@ function initEvents() {
       alert("this dashboard isn't fully configured yet — DISCORD_CLIENT_ID is missing on the bot.");
       return;
     }
-    // Discord matches redirect_uri with exact string comparison — no normalizing
-    // of trailing slashes. Always send bare origin (no path, no trailing slash)
-    // and register *exactly* that in the Discord Developer Portal, e.g.
-    // "http://localhost:8081" — not "http://localhost:8081/".
+
     const redirect = encodeURIComponent(window.location.origin);
     window.location.href = `https://discord.com/api/oauth2/authorize?client_id=${state.clientId}&redirect_uri=${redirect}&response_type=token&scope=identify%20guilds`;
   });
@@ -469,8 +462,6 @@ function parseTokenFromHash() {
 
 async function init() {
   await loadPublicConfig();
-  // token parsing runs first and on its own — a bug in a click handler down
-  // the line should never be able to eat the discord redirect again.
   parseTokenFromHash();
   try {
     initEvents();
